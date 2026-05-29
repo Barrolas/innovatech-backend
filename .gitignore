@@ -5,3 +5,4 @@ GUIA_TRABAJO_EP2.md
 PRESENTACION_GUIA.md
 *.pem
 .env
+!.env.example
