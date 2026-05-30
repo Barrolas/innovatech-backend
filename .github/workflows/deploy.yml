@@ -13,6 +13,8 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,44 +59,63 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy on EC2 Backend
+      - name: Deploy on EC2 Backend crossing the Bastion
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          # 1. IMPORTANTE: GitHub se conecta primero al Frontend público
+          host: ${{ secrets.FRONTEND_IP }} 
+          username: ec2-user
+          key: ${{ secrets.SSH_KEY }}
           script: |
             set -e
+
+            # Variables de rutas y datos requeridos para el salto
             APP_DIR="$HOME/app/innovatech-backend"
-            mkdir -p "$HOME/app"
-            if [ ! -d "$APP_DIR/.git" ]; then
-              git clone -b deploy https://github.com/${{ github.repository }}.git "$APP_DIR"
-            fi
-            cd "$APP_DIR"
-            git fetch origin deploy
-            git checkout deploy
-            git pull origin deploy
+            AWS_REGION="${{ secrets.AWS_REGION }}"
+            
+            # Saltamos de forma interna a la IP Privada del Backend e inyectamos las credenciales de AWS Academy
+            ssh -o StrictHostKeyChecking=no -i "claves-innovatech.pem" ec2-user@${{ secrets.BACKEND_IP }} "
+              set -e
+              mkdir -p \$HOME/app
 
-            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com"
+              if [ ! -d \"$APP_DIR/.git\" ]; then
+                git clone -b deploy https://github.com/${{ github.repository }}.git \"$APP_DIR\"
+              fi
+              cd \"$APP_DIR\"
+              git fetch origin deploy
+              git checkout deploy
+              git pull origin deploy
 
-            {
-              echo "VENTAS_HOST_PORT=8080"
-              echo "DESPACHOS_HOST_PORT=8081"
-              echo "MYSQL_HOST_PORT=3306"
-              echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}"
-              echo "DB_NAME=${{ secrets.DB_NAME }}"
-              echo "DB_USERNAME=${{ secrets.DB_USERNAME }}"
-              echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}"
-              echo "ECR_REGISTRY=${ECR_REGISTRY}"
-              echo "ECR_REPOSITORY_VENTAS=${{ secrets.ECR_REPOSITORY_VENTAS }}"
-              echo "ECR_REPOSITORY_DESPACHOS=${{ secrets.ECR_REPOSITORY_DESPACHOS }}"
-            } > .env
+              export AWS_ACCESS_KEY_ID=\"${{ secrets.AWS_ACCESS_KEY_ID }}\"
+              export AWS_SECRET_ACCESS_KEY=\"${{ secrets.AWS_SECRET_ACCESS_KEY }}\"
+              export AWS_SESSION_TOKEN=\"${{ secrets.AWS_SESSION_TOKEN }}\"
+              export AWS_DEFAULT_REGION=\"\${AWS_REGION}\"
 
-            aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" \
-              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+              ECR_REGISTRY=\"${{ needs.build-and-push.outputs.ecr_registry }}\"
+              if [ -z \"\$ECR_REGISTRY\" ]; then
+                AWS_ACCOUNT_ID=\$(aws sts get-caller-identity --query Account --output text)
+                ECR_REGISTRY=\"\${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com\"
+              fi
 
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
+              {
+                echo \"VENTAS_HOST_PORT=8080\"
+                echo \"DESPACHOS_HOST_PORT=8081\"
+                echo \"MYSQL_HOST_PORT=3306\"
+                echo \"MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}\"
+                echo \"DB_NAME=${{ secrets.DB_NAME }}\"
+                echo \"DB_USERNAME=${{ secrets.DB_USERNAME }}\"
+                echo \"DB_PASSWORD=${{ secrets.DB_PASSWORD }}\"
+                echo \"ECR_REGISTRY=\${ECR_REGISTRY}\"
+                echo \"ECR_REPOSITORY_VENTAS=${{ secrets.ECR_REPOSITORY_VENTAS }}\"
+                echo \"ECR_REPOSITORY_DESPACHOS=${{ secrets.ECR_REPOSITORY_DESPACHOS }}\"
+              } > .env
 
-            docker ps
+              # Hacemos el login nativo usando el CLI temporal
+              aws ecr get-login-password --region \"\${AWS_REGION}\" | docker login --username AWS --password-stdin \"\$ECR_REGISTRY\"
+
+              # Descargamos las imágenes frescas de tu registro privado y levantamos la infraestructura
+              docker compose -f docker-compose.prod.yml pull
+              docker compose -f docker-compose.prod.yml up -d
+
+              docker ps
+            "
