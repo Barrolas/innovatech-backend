@@ -1,0 +1,58 @@
+# Producción AWS: imágenes desde ECR (build en GitHub Actions).
+# Uso en EC2: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: innovatech-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${DB_NAME:-innovatech}
+      MYSQL_USER: ${DB_USERNAME:-innovatech}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-innovatech123}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "${MYSQL_HOST_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ventas:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_VENTAS}:latest
+    container_name: innovatech-ventas
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_ENDPOINT: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-innovatech}
+      DB_USERNAME: ${DB_USERNAME:-innovatech}
+      DB_PASSWORD: ${DB_PASSWORD:-innovatech123}
+    ports:
+      - "${VENTAS_HOST_PORT:-8080}:8080"
+
+  despachos:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_DESPACHOS}:latest
+    container_name: innovatech-despachos
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_ENDPOINT: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-innovatech}
+      DB_USERNAME: ${DB_USERNAME:-innovatech}
+      DB_PASSWORD: ${DB_PASSWORD:-innovatech123}
+    ports:
+      - "${DESPACHOS_HOST_PORT:-8081}:8081"
+
+volumes:
+  mysql_data:
+    name: innovatech_mysql_data
