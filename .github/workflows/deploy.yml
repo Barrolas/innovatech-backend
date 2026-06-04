@@ -31,6 +31,13 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Debug ECR config
+        run: |
+          echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}"
+          echo "AWS_REGION=${{ secrets.AWS_REGION }}"
+          echo "ECR_REPOSITORY_VENTAS=${{ secrets.ECR_REPOSITORY_VENTAS }}"
+          echo "ECR_REPOSITORY_DESPACHOS=${{ secrets.ECR_REPOSITORY_DESPACHOS }}"
+
       - name: Build and push Ventas image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
