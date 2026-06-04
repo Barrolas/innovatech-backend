@@ -1,5 +1,5 @@
-# Puertos estándar EP2 (host = contenedor en servicios expuestos).
-# Si hay conflicto en tu PC, usa la rama deploy o copia .env.example.alt-ports → .env
+# Producción AWS: imágenes desde ECR (build en GitHub Actions).
+# Uso en EC2: docker compose -f docker-compose.prod.yml up -d
 
 services:
   mysql:
@@ -22,7 +22,7 @@ services:
       retries: 5
 
   ventas:
-    build: ./back-Ventas_SpringBoot/Springboot-API-REST
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_VENTAS}:latest
     container_name: innovatech-ventas
     restart: unless-stopped
     depends_on:
@@ -38,7 +38,7 @@ services:
       - "${VENTAS_HOST_PORT:-8080}:8080"
 
   despachos:
-    build: ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_DESPACHOS}:latest
     container_name: innovatech-despachos
     restart: unless-stopped
     depends_on:
