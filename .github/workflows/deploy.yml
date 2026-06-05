@@ -62,7 +62,7 @@ jobs:
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
-  deploy:
+deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
 
@@ -71,12 +71,6 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-
-      MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
-      DB_NAME: ${{ secrets.DB_NAME }}
-      DB_USERNAME: ${{ secrets.DB_USERNAME }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
       ECR_REGISTRY_FROM_BUILD: ${{ needs.build-and-push.outputs.ecr_registry }}
       ECR_REPOSITORY_VENTAS: ${{ secrets.ECR_REPOSITORY_VENTAS }}
       ECR_REPOSITORY_DESPACHOS: ${{ secrets.ECR_REPOSITORY_DESPACHOS }}
@@ -89,45 +83,99 @@ jobs:
           username: ec2-user
           key: ${{ secrets.SSH_KEY }}
 
-          envs: AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,MYSQL_ROOT_PASSWORD,DB_NAME,DB_USERNAME,DB_PASSWORD,ECR_REGISTRY_FROM_BUILD,ECR_REPOSITORY_VENTAS,ECR_REPOSITORY_DESPACHOS
+          envs: AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,ECR_REGISTRY_FROM_BUILD,ECR_REPOSITORY_VENTAS,ECR_REPOSITORY_DESPACHOS
 
           script: |
             set -euo pipefail
-
-            if ! docker compose version >/dev/null 2>&1; then
-              sudo mkdir -p /usr/local/lib/docker/cli-plugins
-
-              sudo curl -SL \
-                https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
-                -o /usr/local/lib/docker/cli-plugins/docker-compose
-
-              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-            fi
-
-            docker compose version
 
             APP_DIR="$HOME/app/innovatech-backend"
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
-            ECR_REGISTRY="${ECR_REGISTRY_FROM_BUILD:-}"
-
-            if [ -z "$ECR_REGISTRY" ]; then
-              AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-              ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo yum install -y docker || sudo dnf install -y docker
+              sudo systemctl enable --now docker
             fi
+
+            if ! docker compose version >/dev/null 2>&1; then
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins
+              sudo curl -SL \
+                https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            fi
+
+            ECR_REGISTRY="${ECR_REGISTRY_FROM_BUILD}"
 
             cat > .env <<EOF
             VENTAS_HOST_PORT=8080
             DESPACHOS_HOST_PORT=8081
             MYSQL_HOST_PORT=3306
-            MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-            DB_NAME=${DB_NAME}
-            DB_USERNAME=${DB_USERNAME}
-            DB_PASSWORD=${DB_PASSWORD}
+            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+            DB_NAME=${{ secrets.DB_NAME }}
+            DB_USERNAME=${{ secrets.DB_USERNAME }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             ECR_REGISTRY=${ECR_REGISTRY}
             ECR_REPOSITORY_VENTAS=${ECR_REPOSITORY_VENTAS}
             ECR_REPOSITORY_DESPACHOS=${ECR_REPOSITORY_DESPACHOS}
+            EOF
+
+            cat > docker-compose.prod.yml <<'EOF'
+            services:
+              mysql:
+                image: mysql:8.0
+                container_name: innovatech-mysql
+                restart: unless-stopped
+                environment:
+                  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+                  MYSQL_DATABASE: ${DB_NAME}
+                  MYSQL_USER: ${DB_USERNAME}
+                  MYSQL_PASSWORD: ${DB_PASSWORD}
+                volumes:
+                  - mysql_data:/var/lib/mysql
+                ports:
+                  - "${MYSQL_HOST_PORT:-3306}:3306"
+                healthcheck:
+                  test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 5
+
+              ventas:
+                image: ${ECR_REGISTRY}/${ECR_REPOSITORY_VENTAS}:latest
+                container_name: innovatech-ventas
+                restart: unless-stopped
+                depends_on:
+                  mysql:
+                    condition: service_healthy
+                environment:
+                  DB_ENDPOINT: mysql
+                  DB_PORT: 3306
+                  DB_NAME: ${DB_NAME}
+                  DB_USERNAME: ${DB_USERNAME}
+                  DB_PASSWORD: ${DB_PASSWORD}
+                ports:
+                  - "${VENTAS_HOST_PORT:-8080}:8080"
+
+              despachos:
+                image: ${ECR_REGISTRY}/${ECR_REPOSITORY_DESPACHOS}:latest
+                container_name: innovatech-despachos
+                restart: unless-stopped
+                depends_on:
+                  mysql:
+                    condition: service_healthy
+                environment:
+                  DB_ENDPOINT: mysql
+                  DB_PORT: 3306
+                  DB_NAME: ${DB_NAME}
+                  DB_USERNAME: ${DB_USERNAME}
+                  DB_PASSWORD: ${DB_PASSWORD}
+                ports:
+                  - "${DESPACHOS_HOST_PORT:-8081}:8081"
+
+            volumes:
+              mysql_data:
+                name: innovatech_mysql_data
             EOF
 
             aws ecr get-login-password --region "$AWS_REGION" \
