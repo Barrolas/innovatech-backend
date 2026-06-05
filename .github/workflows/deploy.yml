@@ -105,7 +105,14 @@ jobs:
                 sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
               fi
 
-              ECR_REGISTRY="${ECR_REGISTRY_FROM_BUILD}"
+              ECR_REGISTRY="${ECR_REGISTRY_FROM_BUILD:-}"
+
+              if [ -z "$ECR_REGISTRY" ]; then
+                AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+              fi
+
+              echo "Using ECR registry: $ECR_REGISTRY"
 
               cat > .env <<EOF
               VENTAS_HOST_PORT=8080
