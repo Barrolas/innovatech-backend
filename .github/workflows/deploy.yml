@@ -94,6 +94,18 @@ jobs:
           script: |
             set -euo pipefail
 
+            if ! docker compose version >/dev/null 2>&1; then
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins
+
+              sudo curl -SL \
+                https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            fi
+
+            docker compose version
+
             APP_DIR="$HOME/app/innovatech-backend"
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
