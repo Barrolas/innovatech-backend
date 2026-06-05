@@ -98,6 +98,10 @@ jobs:
           script: |
             set -euo pipefail
 
+            if ! command -v git >/dev/null 2>&1; then
+              sudo yum install -y git || sudo dnf install -y git
+            fi
+
             APP_DIR="$HOME/app/innovatech-backend"
 
             mkdir -p "$HOME/app"
