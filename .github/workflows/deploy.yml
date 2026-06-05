@@ -82,63 +82,46 @@ jobs:
       ECR_REPOSITORY_DESPACHOS: ${{ secrets.ECR_REPOSITORY_DESPACHOS }}
 
     steps:
-      - name: Deploy on private EC2 through bastion
+      - name: Deploy on public EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.BACKEND_IP }}
           username: ec2-user
           key: ${{ secrets.SSH_KEY }}
 
-          proxy_host: ${{ secrets.FRONTEND_IP }}
-          proxy_username: ec2-user
-          proxy_key: ${{ secrets.SSH_KEY }}
+            envs: AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,MYSQL_ROOT_PASSWORD,DB_NAME,DB_USERNAME,DB_PASSWORD,ECR_REGISTRY_FROM_BUILD,ECR_REPOSITORY_VENTAS,ECR_REPOSITORY_DESPACHOS
 
-          envs: AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,MYSQL_ROOT_PASSWORD,DB_NAME,DB_USERNAME,DB_PASSWORD,ECR_REGISTRY_FROM_BUILD,ECR_REPOSITORY_VENTAS,ECR_REPOSITORY_DESPACHOS
+            script: |
+              set -euo pipefail
 
-          script: |
-            set -euo pipefail
+              APP_DIR="$HOME/app/innovatech-backend"
+              mkdir -p "$APP_DIR"
+              cd "$APP_DIR"
 
-            if ! command -v git >/dev/null 2>&1; then
-              sudo yum install -y git || sudo dnf install -y git
-            fi
+              ECR_REGISTRY="${ECR_REGISTRY_FROM_BUILD:-}"
 
-            APP_DIR="$HOME/app/innovatech-backend"
+              if [ -z "$ECR_REGISTRY" ]; then
+                AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+              fi
 
-            mkdir -p "$HOME/app"
+              cat > .env <<EOF
+              VENTAS_HOST_PORT=8080
+              DESPACHOS_HOST_PORT=8081
+              MYSQL_HOST_PORT=3306
+              MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+              DB_NAME=${DB_NAME}
+              DB_USERNAME=${DB_USERNAME}
+              DB_PASSWORD=${DB_PASSWORD}
+              ECR_REGISTRY=${ECR_REGISTRY}
+              ECR_REPOSITORY_VENTAS=${ECR_REPOSITORY_VENTAS}
+              ECR_REPOSITORY_DESPACHOS=${ECR_REPOSITORY_DESPACHOS}
+              EOF
 
-            if [ ! -d "$APP_DIR/.git" ]; then
-              git clone -b deploy https://github.com/${{ github.repository }}.git "$APP_DIR"
-            fi
+              aws ecr get-login-password --region "$AWS_REGION" \
+                | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-            cd "$APP_DIR"
-            git fetch origin deploy
-            git checkout deploy
-            git pull --ff-only origin deploy
+              docker compose -f docker-compose.prod.yml pull
+              docker compose -f docker-compose.prod.yml up -d
 
-            ECR_REGISTRY="${ECR_REGISTRY_FROM_BUILD:-}"
-
-            if [ -z "$ECR_REGISTRY" ]; then
-              AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-              ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-            fi
-
-            cat > .env <<EOF
-            VENTAS_HOST_PORT=8080
-            DESPACHOS_HOST_PORT=8081
-            MYSQL_HOST_PORT=3306
-            MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-            DB_NAME=${DB_NAME}
-            DB_USERNAME=${DB_USERNAME}
-            DB_PASSWORD=${DB_PASSWORD}
-            ECR_REGISTRY=${ECR_REGISTRY}
-            ECR_REPOSITORY_VENTAS=${ECR_REPOSITORY_VENTAS}
-            ECR_REPOSITORY_DESPACHOS=${ECR_REPOSITORY_DESPACHOS}
-            EOF
-
-            aws ecr get-login-password --region "$AWS_REGION" \
-              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
-
-            docker ps
+              docker ps
