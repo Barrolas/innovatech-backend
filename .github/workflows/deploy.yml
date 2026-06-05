@@ -123,7 +123,7 @@ jobs:
               cat > docker-compose.prod.yml <<'EOF'
               services:
                 mysql:
-                  image: mysql:8.0
+                  image: public.ecr.aws/docker/library/mysql:8.0
                   container_name: innovatech-mysql
                   restart: unless-stopped
                   environment:
@@ -178,6 +178,7 @@ jobs:
                   name: innovatech_mysql_data
               EOF
 
+              rm -f "$HOME/.docker/config.json"
               aws ecr get-login-password --region "$AWS_REGION" \
                 | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
